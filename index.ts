@@ -6,6 +6,9 @@ import { upload } from './cloudflare/upload';
 import { testR2Connection } from './cloudflare/testR2Connection';
 import { getSubdomain } from './utils/getSubdomain';
 import { serveStatic } from 'hono/bun';
+import { mkdtempSync, rmSync } from 'node:fs'; // Use Node.js FS module, natively supported by Bun
+import { tmpdir } from 'node:os'; // To get the OS's temp directory path
+import { join } from 'node:path'; // For creating paths safely
 
 const app = new Hono()
 
@@ -68,65 +71,55 @@ app.get('/test-r2', async (c) => {
 });
 
 app.post('/docs', async (c) => {
-  const body = await c.req.parseBody()
-  const projectName = body["projectName"]
-  const projectDirectory = "./docs" 
-  const projectPath = `${projectDirectory}/${projectName}`
+  const body = await c.req.parseBody();
+  const projectName = body['projectName'];
   
-  if(typeof projectName != "string") {
-    return c.text("error")
+  if (typeof projectName !== 'string' || !projectName) {
+    return c.text('Invalid projectName provided.', 400);
   }
 
+  let tempBuildDir: string | null = null;
+
   try {
+    tempBuildDir = mkdtempSync(join(tmpdir(), 'docusaurus-build-'));
+    console.log(`[API] Created temporary directory: ${tempBuildDir}`);
+    
+    const projectPath = join(tempBuildDir, projectName);
+
     Bun.spawnSync(
       ['bunx', 'create-docusaurus@latest', projectName, 'classic', '--typescript'],
       {
-        cwd: projectDirectory,
+        cwd: tempBuildDir,
         stdout: 'inherit',
         stderr: 'inherit',
         env: { ...process.env },
       }
     );
+    Bun.spawnSync(['bun', 'run', 'build'], { cwd: projectPath, stdout: 'inherit', stderr: 'inherit' });
+    Bun.spawnSync(['rm', '-rf', 'node_modules'], { cwd: projectPath, stdout: 'inherit', stderr: 'inherit' });
 
-    //NOTE: these two procs could be done in parallel
-    Bun.spawnSync(
-      ['bun', 'run', 'build'],
-      {
-        cwd: projectPath,
-        stdout: 'inherit',
-        stderr: 'inherit',
-        env: { ...process.env },
-      }
+    await upload(
+      r2,
+      projectPath,
+      projectName,
+      bucketName
     );
 
-    Bun.spawnSync(
-      ['rm', '-rf', 'node_modules'],
-      {
-        cwd: projectPath,
-        stdout: 'inherit',
-        stderr: 'inherit',
-      }
-    );
+    return c.text('Build and upload successful.');
+
   } catch (error) {
-    console.error(`[API] An unexpected error occurred during spawn for ${projectName}:`, error);
-    return c.text("An unexpected server error occurred.", 500);
+    console.error(`[API] A critical error occurred during the process:`, error);
+    return c.text('An error occurred during the build or upload process.', 500);
+  } finally {
+    if (tempBuildDir) {
+      try {
+        rmSync(tempBuildDir, { recursive: true, force: true });
+      } catch (cleanupError) {
+        console.error(`[API] CRITICAL: Failed to clean up temporary directory ${tempBuildDir}. Manual intervention may be required.`, cleanupError);
+      }
+    }
   }
-
-  
-  // try {
-  //   await upload(
-  //       r2,
-  //     `${projectPath}`,
-  //     projectName,
-  //     bucketName
-  //   );
-  // } catch (error) {
-  //   console.error("Upload failed:", error);
-  //   return c.text("Upload failed", 500);
-  // }
-  
-  return c.text("ok")
-})
+});
 
 serve({
   fetch: app.fetch,
