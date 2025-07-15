@@ -22,52 +22,52 @@ const r2 = new S3Client({
 });
 
 //MULTI-TENANT
-app.use('*', async (c, next) => {
-  const hostname = new URL(c.req.url).hostname;
-  const subdomain = getSubdomain(hostname)
-
-  if (subdomain && subdomain !== 'www') {
-    //TODO: check if the project exists, if not throw error
-    console.log(`MULTI-TENANT MODE: Request for tenant '${subdomain}'`);
-
-    let requestedFile = new URL(c.req.url).pathname;
-
-    if (requestedFile.endsWith('/')) {
-      requestedFile += 'index.html';
-    }
-
-    const key = `${subdomain}/build${requestedFile}`;
-
-    console.log(`Attempting to fetch from R2 with key: ${key}`);
-
-    try {
-      const command = new GetObjectCommand({
-        Bucket: bucketName,
-        Key: key,
-      });
-
-      const object = await r2.send(command);
-
-      if (object.Body) {
-        if (object.ContentType) {
-          c.header('Content-Type', object.ContentType);
-        }
-        if (object.ETag) {
-          c.header('ETag', object.ETag);
-        }
-        if (object.ContentLength) {
-          c.header('Content-Length', object.ContentLength.toString());
-        }
-
-        return c.body(object.Body as any);
-      }
-    } catch (error) {
-      return c.text('Not Found', 404);
-    }
-  }
-
-  await next();
-});
+// app.use('*', async (c, next) => {
+//   const hostname = new URL(c.req.url).hostname;
+//   const subdomain = getSubdomain(hostname)
+//
+//   if (subdomain && subdomain !== 'www') {
+//     //TODO: check if the project exists, if not throw error
+//     console.log(`MULTI-TENANT MODE: Request for tenant '${subdomain}'`);
+//
+//     let requestedFile = new URL(c.req.url).pathname;
+//
+//     if (requestedFile.endsWith('/')) {
+//       requestedFile += 'index.html';
+//     }
+//
+//     const key = `${subdomain}/build${requestedFile}`;
+//
+//     console.log(`Attempting to fetch from R2 with key: ${key}`);
+//
+//     try {
+//       const command = new GetObjectCommand({
+//         Bucket: bucketName,
+//         Key: key,
+//       });
+//
+//       const object = await r2.send(command);
+//
+//       if (object.Body) {
+//         if (object.ContentType) {
+//           c.header('Content-Type', object.ContentType);
+//         }
+//         if (object.ETag) {
+//           c.header('ETag', object.ETag);
+//         }
+//         if (object.ContentLength) {
+//           c.header('Content-Length', object.ContentLength.toString());
+//         }
+//
+//         return c.body(object.Body as any);
+//       }
+//     } catch (error) {
+//       return c.text('Not Found', 404);
+//     }
+//   }
+//
+//   await next();
+// });
 
 //BUILD A DOC ON R2
 app.post('/build', async (c) => {
