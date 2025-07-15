@@ -62,13 +62,7 @@ app.use('*', async (c, next) => {
         return c.body(object.Body as any);
       }
     } catch (error) {
-      if (error instanceof NotFound) {
-        console.log(`File not found in R2 for tenant '${subdomain}': ${key}`);
-        return c.text('Not Found', 404);
-      }
-
-      console.error(`Error fetching from R2 for tenant '${subdomain}':`, error);
-      return c.text('Internal Server Error', 500);
+      return c.text('Not Found', 404);
     }
   }
 
