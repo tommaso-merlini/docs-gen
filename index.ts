@@ -1,7 +1,7 @@
 import { serve } from 'bun'
 import { Hono } from 'hono'
 import { $ } from 'bun';
-import { S3Client } from '@aws-sdk/client-s3';
+import { GetObjectCommand, NotFound, S3Client } from '@aws-sdk/client-s3';
 import { upload } from './cloudflare/upload';
 import { testR2Connection } from './cloudflare/testR2Connection';
 import { getSubdomain } from './utils/getSubdomain';
@@ -29,18 +29,47 @@ app.use('*', async (c, next) => {
   if (subdomain && subdomain !== 'www') {
     //TODO: check if the project exists, if not throw error
     console.log(`MULTI-TENANT MODE: Request for tenant '${subdomain}'`);
-    const tenantRoot = `./docs/${subdomain}/build`;
-    const staticServer = serveStatic({
-      root: tenantRoot,
-      // TODO: serve 'index.html' for directory requests (e.g., /)
-      onNotFound: (path: string, c: any) => {
-        console.log(`type of path: ${typeof path} | type of c: ${typeof c}`)
-        console.log(`File not found for tenant '${subdomain}': ${path}`);
+
+    let requestedFile = new URL(c.req.url).pathname;
+
+    if (requestedFile.endsWith('/')) {
+      requestedFile += 'index.html';
+    }
+
+    const key = `${subdomain}/build${requestedFile}`;
+
+    console.log(`Attempting to fetch from R2 with key: ${key}`);
+
+    try {
+      const command = new GetObjectCommand({
+        Bucket: bucketName,
+        Key: key,
+      });
+
+      const object = await r2.send(command);
+
+      if (object.Body) {
+        if (object.ContentType) {
+          c.header('Content-Type', object.ContentType);
+        }
+        if (object.ETag) {
+          c.header('ETag', object.ETag);
+        }
+        if (object.ContentLength) {
+          c.header('Content-Length', object.ContentLength.toString());
+        }
+
+        return c.body(object.Body as any);
+      }
+    } catch (error) {
+      if (error instanceof NotFound) {
+        console.log(`File not found in R2 for tenant '${subdomain}': ${key}`);
         return c.text('Not Found', 404);
       }
-    });
 
-    return staticServer(c, next);
+      console.error(`Error fetching from R2 for tenant '${subdomain}':`, error);
+      return c.text('Internal Server Error', 500);
+    }
   }
 
   await next();
