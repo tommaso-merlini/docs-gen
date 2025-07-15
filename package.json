@@ -1,0 +1,17 @@
+{
+  "name": "app-hono",
+  "module": "index.ts",
+  "type": "module",
+  "private": true,
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.844.0",
+    "@hono/node-server": "^1.15.0",
+    "hono": "^4.8.4"
+  }
+}
