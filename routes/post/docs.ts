@@ -17,10 +17,8 @@ interface DocsRouteConfig {
 
 export const createDocsRoute = (config: DocsRouteConfig) => {
   return async (c: Context) => {
-    const body = await c.req.parseBody();
-    const validation = projectNameSchema.safeParse({
-      projectName: body['projectName']
-    });
+    const body = await c.req.json();
+    const validation = projectNameSchema.safeParse(body);
     
     if (!validation.success) {
       return c.json({ 

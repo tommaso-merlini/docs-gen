@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Context } from 'hono';
 
-const projectNameSchema = z.object({
+const buildRequestSchema = z.object({
   projectName: z.string().min(1, 'Project name is required')
 });
 
@@ -35,68 +35,75 @@ interface BuildRouteConfig {
 
 export const createBuildRoute = (config: BuildRouteConfig) => {
   return async (c: Context) => {
-    const body = await c.req.parseBody();
-    const validation = projectNameSchema.safeParse({
-      projectName: body['projectName']
-    });
-
-    if (!validation.success) {
-      return c.json({
-        ok: false,
-        error: validation.error
-      }, 400);
-    }
-
-    const { projectName } = validation.data;
-
-    let tempDir: string | null = null;
-
     try {
-      tempDir = mkdtempSync(join(tmpdir(), 'project-build-'));
-      console.log(`Created temporary directory for build: ${tempDir}`);
+      const body = await c.req.json();
+      const validation = buildRequestSchema.safeParse(body);
 
-      console.log(`Fetching project '${projectName}' from R2...`);
-      await download(config.r2, config.bucketName, projectName, tempDir, [`${projectName}/build/`]);
-      console.log(`Project '${projectName}' downloaded successfully.`);
+      if (!validation.success) {
+        return c.json({
+          ok: false,
+          error: validation.error
+        }, 400);
+      }
 
-      const projectPath = join(tempDir, projectName);
+      const { projectName } = validation.data;
 
-      // Run build steps, throwing on failure
-      runCommand(['bun', 'install'], projectPath);
-      runCommand(['bun', 'run', 'build'], projectPath);
-      runCommand(['rm', '-rf', 'node_modules'], projectPath);
+      let tempDir: string | null = null;
 
-      await upload(
-        config.r2,
-        `${projectPath}/build`,
-        `${projectName}/build`,
-        config.bucketName
-      );
+      try {
+        tempDir = mkdtempSync(join(tmpdir(), 'project-build-'));
+        console.log(`Created temporary directory for build: ${tempDir}`);
 
-      return c.json({
-        ok: true,
-        message: 'Build and upload successful',
-        projectName
-      });
+        console.log(`Fetching project '${projectName}' from R2...`);
+        await download(config.r2, config.bucketName, projectName, tempDir, [`${projectName}/build/`]);
+        console.log(`Project '${projectName}' downloaded successfully.`);
 
-    } catch (error) {
-      console.error(`A critical error occurred during the build process for '${projectName}':`, error);
-      return c.json({
-        ok: false,
-        error: 'An error occurred during the build or upload process'
-      }, 500);
-    } finally {
-      if (tempDir) {
-        try {
-          rmSync(tempDir, {
-            recursive: true,
-            force: true
-          });
-          console.log(`Successfully cleaned up temporary directory: ${tempDir}`);
-        } catch (cleanupError) {
-          console.error(`CRITICAL: Failed to clean up temporary directory ${tempDir}. Manual intervention may be required.`, cleanupError);
+        const projectPath = join(tempDir, projectName);
+
+        // Run build steps, throwing on failure
+        runCommand(['bun', 'install'], projectPath);
+        runCommand(['bun', 'run', 'build'], projectPath);
+        runCommand(['rm', '-rf', 'node_modules'], projectPath);
+
+        await upload(
+          config.r2,
+          `${projectPath}/build`,
+          `${projectName}/build`,
+          config.bucketName
+        );
+
+        return c.json({
+          ok: true,
+          message: 'Build and upload successful',
+          projectName
+        });
+
+      } catch (error) {
+        console.error(`A critical error occurred during the build process for '${projectName}':`, error);
+        return c.json({
+          ok: false,
+          error: 'An error occurred during the build or upload process',
+          details: error instanceof Error ? error.message : String(error)
+        }, 500);
+      } finally {
+        if (tempDir) {
+          try {
+            rmSync(tempDir, {
+              recursive: true,
+              force: true
+            });
+            console.log(`Successfully cleaned up temporary directory: ${tempDir}`);
+          } catch (cleanupError) {
+            console.error(`CRITICAL: Failed to clean up temporary directory ${tempDir}. Manual intervention may be required.`, cleanupError);
+          }
         }
       }
+    } catch (error) {
+      console.error('Error parsing JSON request:', error);
+      return c.json({
+        ok: false,
+        error: 'Invalid JSON format in request body'
+      }, 400);
     }
   };
 };
