@@ -1,16 +1,10 @@
 import { serve } from 'bun'
 import { Hono } from 'hono'
-import { z } from 'zod'
-import { GetObjectCommand, NotFound, S3Client } from '@aws-sdk/client-s3';
-import { upload } from './cloudflare/upload';
+import {  GetObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { testR2Connection } from './cloudflare/testR2Connection';
-import { getSubdomain } from './utils/getSubdomain';
-import { mkdtempSync, rmSync } from 'node:fs'; // Use Node.js FS module, natively supported by Bun
-import { tmpdir } from 'node:os'; // To get the OS's temp directory path
-import { join } from 'node:path'; // For creating paths safely
-import { download } from './cloudflare/download';
 import { createBuildRoute } from './routes/post/build';
 import { createDocsRoute } from './routes/post/docs';
+import { getSubdomain } from './utils/getSubdomain';
 
 const app = new Hono()
 
@@ -31,53 +25,55 @@ const r2 = new S3Client({
   retryMode: 'adaptive',
 });
 
+const repos = "staging/project-repos/"
+
 //MULTI-TENANT
-// app.use('*', async (c, next) => {
-//   const hostname = new URL(c.req.url).hostname;
-//   const subdomain = getSubdomain(hostname)
-//
-//   if (subdomain && subdomain !== 'www') {
-//     //TODO: check if the project exists, if not throw error
-//     console.log(`MULTI-TENANT MODE: Request for tenant '${subdomain}'`);
-//
-//     let requestedFile = new URL(c.req.url).pathname;
-//
-//     if (requestedFile.endsWith('/')) {
-//       requestedFile += 'index.html';
-//     }
-//
-//     const key = `${subdomain}/build${requestedFile}`;
-//
-//     console.log(`Attempting to fetch from R2 with key: ${key}`);
-//
-//     try {
-//       const command = new GetObjectCommand({
-//         Bucket: bucketName,
-//         Key: key,
-//       });
-//
-//       const object = await r2.send(command);
-//
-//       if (object.Body) {
-//         if (object.ContentType) {
-//           c.header('Content-Type', object.ContentType);
-//         }
-//         if (object.ETag) {
-//           c.header('ETag', object.ETag);
-//         }
-//         if (object.ContentLength) {
-//           c.header('Content-Length', object.ContentLength.toString());
-//         }
-//
-//         return c.body(object.Body as any);
-//       }
-//     } catch (error) {
-//       return c.text('Not Found', 404);
-//     }
-//   }
-//
-//   await next();
-// });
+app.use('*', async (c, next) => {
+  const hostname = new URL(c.req.url).hostname;
+  const subdomain = getSubdomain(hostname)
+
+  if (subdomain && subdomain !== 'api') {
+    //TODO: check if the project exists, if not throw error
+    console.log(`MULTI-TENANT MODE: Request for tenant '${subdomain}'`);
+
+    let requestedFile = new URL(c.req.url).pathname;
+
+    if (requestedFile.endsWith('/')) {
+      requestedFile += 'index.html';
+    }
+
+    const key = `${repos}${subdomain}/build${requestedFile}`;
+
+    console.log(`Attempting to fetch from R2 with key: ${key}`);
+
+    try {
+      const command = new GetObjectCommand({
+        Bucket: bucketName,
+        Key: key,
+      });
+
+      const object = await r2.send(command);
+
+      if (object.Body) {
+        if (object.ContentType) {
+          c.header('Content-Type', object.ContentType);
+        }
+        if (object.ETag) {
+          c.header('ETag', object.ETag);
+        }
+        if (object.ContentLength) {
+          c.header('Content-Length', object.ContentLength.toString());
+        }
+
+        return c.body(object.Body as any);
+      }
+    } catch (error) {
+      return c.text('Not Found', 404);
+    }
+  }
+
+  await next();
+});
 
 app.post('/build', createBuildRoute({ r2, bucketName }));
 app.post('/docs', createDocsRoute({ r2, bucketName }));
