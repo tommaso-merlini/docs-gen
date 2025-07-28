@@ -1,5 +1,6 @@
 import { serve } from 'bun'
 import { Hono } from 'hono'
+import { z } from 'zod'
 import { GetObjectCommand, NotFound, S3Client } from '@aws-sdk/client-s3';
 import { upload } from './cloudflare/upload';
 import { testR2Connection } from './cloudflare/testR2Connection';
@@ -8,6 +9,8 @@ import { mkdtempSync, rmSync } from 'node:fs'; // Use Node.js FS module, nativel
 import { tmpdir } from 'node:os'; // To get the OS's temp directory path
 import { join } from 'node:path'; // For creating paths safely
 import { download } from './cloudflare/download';
+import { createBuildRoute } from './routes/post/build';
+import { createDocsRoute } from './routes/post/docs';
 
 const app = new Hono()
 
@@ -19,6 +22,13 @@ const r2 = new S3Client({
     accessKeyId: process.env.R2_ACCESS_KEY!,
     secretAccessKey: process.env.R2_SECRET_KEY!,
   },
+  requestHandler: {
+    // @ts-ignore - Bun specific timeout configuration
+    requestTimeout: 30000,
+    connectionTimeout: 10000,
+  },
+  maxAttempts: 3,
+  retryMode: 'adaptive',
 });
 
 //MULTI-TENANT
@@ -69,106 +79,8 @@ const r2 = new S3Client({
 //   await next();
 // });
 
-//BUILD A DOC ON R2
-app.post('/build', async (c) => {
-  const body = await c.req.parseBody();
-  const projectName = body['projectName'];
-  
-  if (typeof projectName !== 'string' || !projectName) {
-    return c.text('Invalid projectName provided.', 400);
-  }
-
-  let tempDir: string | null = null;
-
-  try {
-    tempDir = mkdtempSync(join(tmpdir(), 'project-build-'));
-    console.log(`Created temporary directory for build: ${tempDir}`);
-    
-    console.log(`Fetching project '${projectName}' from R2...`);
-    await download(r2, bucketName, projectName, tempDir);
-    console.log(`Project '${projectName}' downloaded successfully.`);
-    
-    const projectPath = join(tempDir, projectName);
-
-    Bun.spawnSync(['bun', 'install'], { cwd: projectPath, stdout: 'inherit', stderr: 'inherit' });
-    Bun.spawnSync(['bun', 'run', 'build'], { cwd: projectPath, stdout: 'inherit', stderr: 'inherit' });
-    Bun.spawnSync(['rm', '-rf', 'node_modules'], { cwd: projectPath, stdout: 'inherit', stderr: 'inherit' });
-
-    await upload(
-      r2,
-      `${projectPath}/build`,
-      `${projectName}/build`,
-      bucketName
-    );
-
-    return c.text('Build and upload successful.');
-
-  } catch (error) {
-    console.error(`A critical error occurred during the build process for '${projectName}':`, error);
-    return c.text('An error occurred during the build or upload process.', 500);
-  } finally {
-    if (tempDir) {
-      try {
-        rmSync(tempDir, { recursive: true, force: true });
-        console.log(`Successfully cleaned up temporary directory: ${tempDir}`);
-      } catch (cleanupError) {
-        console.error(`CRITICAL: Failed to clean up temporary directory ${tempDir}. Manual intervention may be required.`, cleanupError);
-      }
-    }
-  }
-});
-
-//CREATE A DOC AND UPLOAD IT TO R2 WITHOUT BUILDING IT
-app.post('/docs', async (c) => {
-  const body = await c.req.parseBody();
-  const projectName = body['projectName'];
-  
-  if (typeof projectName !== 'string' || !projectName) {
-    return c.text('Invalid projectName provided.', 400);
-  }
-
-  let tempBuildDir: string | null = null;
-
-  try {
-    tempBuildDir = mkdtempSync(join(tmpdir(), 'docusaurus-build-'));
-    console.log(`[API] Created temporary directory: ${tempBuildDir}`);
-    
-    const projectPath = join(tempBuildDir, projectName);
-
-    Bun.spawnSync(
-      ['bunx', 'create-docusaurus@latest', projectName, 'classic', '--typescript'],
-      {
-        cwd: tempBuildDir,
-        stdout: 'inherit',
-        stderr: 'inherit',
-        env: { ...process.env },
-      }
-    );
-    // Bun.spawnSync(['bun', 'run', 'build'], { cwd: projectPath, stdout: 'inherit', stderr: 'inherit' });
-    Bun.spawnSync(['rm', '-rf', 'node_modules'], { cwd: projectPath, stdout: 'inherit', stderr: 'inherit' });
-
-    await upload(
-      r2,
-      projectPath,
-      projectName,
-      bucketName
-    );
-
-    return c.text('Build and upload successful.');
-
-  } catch (error) {
-    console.error(`[API] A critical error occurred during the process:`, error);
-    return c.text('An error occurred during the build or upload process.', 500);
-  } finally {
-    if (tempBuildDir) {
-      try {
-        rmSync(tempBuildDir, { recursive: true, force: true });
-      } catch (cleanupError) {
-        console.error(`[API] CRITICAL: Failed to clean up temporary directory ${tempBuildDir}. Manual intervention may be required.`, cleanupError);
-      }
-    }
-  }
-});
+app.post('/build', createBuildRoute({ r2, bucketName }));
+app.post('/docs', createDocsRoute({ r2, bucketName }));
 
 app.get('/', (c) => {
   return c.text('Hello Hono!')
@@ -194,7 +106,9 @@ app.get('/test-r2', async (c) => {
   }
 });
 
-serve({
+const server = serve({
   fetch: app.fetch,
-  port: 3001
-})
+  port: 3001,
+});
+
+console.log(`Server listening on port ${server.port}`);
