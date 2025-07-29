@@ -25,7 +25,7 @@ const r2 = new S3Client({
   retryMode: 'adaptive',
 });
 
-const repos = "staging/project-repos/"
+export const repos = "staging/project-repos/"
 
 //MULTI-TENANT
 app.use('*', async (c, next) => {

@@ -6,6 +6,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Context } from 'hono';
+import { repos } from '../..';
 
 const buildRequestSchema = z.object({
   projectName: z.string().min(1, 'Project name is required')
@@ -68,7 +69,7 @@ export const createBuildRoute = (config: BuildRouteConfig) => {
         await upload(
           config.r2,
           `${projectPath}/build`,
-          `${projectName}/build`,
+          `${repos}${projectName}/build`,
           config.bucketName
         );
 
