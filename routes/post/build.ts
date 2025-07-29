@@ -69,7 +69,7 @@ export const createBuildRoute = (config: BuildRouteConfig) => {
         await upload(
           config.r2,
           `${projectPath}/build`,
-          `${repos}${projectName}/build`,
+          `${projectName}/build`,
           config.bucketName
         );
 
