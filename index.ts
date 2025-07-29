@@ -25,6 +25,8 @@ const r2 = new S3Client({
   retryMode: 'adaptive',
 });
 
+export const repos = "project-repos/"
+
 //MULTI-TENANT
 app.use('*', async (c, next) => {
   const hostname = new URL(c.req.url).hostname;
@@ -40,7 +42,7 @@ app.use('*', async (c, next) => {
       requestedFile += 'index.html';
     }
 
-    const key = `${subdomain}/build${requestedFile}`;
+    const key = `${repos}${subdomain}/build${requestedFile}`;
 
     console.log(`Attempting to fetch from R2 with key: ${key}`);
 
